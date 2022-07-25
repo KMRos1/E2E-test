@@ -1,0 +1,50 @@
+{
+   "name": "e2e-packhelp-pro",
+   "version": "1.0.0",
+   "main": "index.js",
+   "license": "CLOSED SOURCE",
+   "private": true,
+   "scripts": {
+      "prepare:local:githooks": "yarn lefthook install",
+      "test": "yarn run playwright test",
+      "check:all": "yarn check:tsc && yarn check:prettier && yarn check:eslint",
+      "check:prettier": "prettier --check --config ./.prettierrc **/*",
+      "check:eslint": "eslint --config ./.eslintrc.json '!(node_modules|build)/**/*.ts'",
+      "check:tsc": "tsc --noEmit --project ./tsconfig.json",
+      "pretty:all": "prettier --write $(find ./ | grep '\\.ts$'  | xargs)",
+      "betterer": "betterer",
+      "trace": "cd ci/scripts/ && ./show-trace.sh"
+   },
+   "dependencies": {
+      "@playwright/test": "^1.19.2",
+      "@types/faker": "^5.5.9",
+      "@types/node": "16.3",
+      "axios": "^0.24.0",
+      "chalk": "^4.1.2",
+      "dotenv": "^10.0.0",
+      "env-var": "^7.1.1",
+      "git": "^0.1.5",
+      "i18n-iso-countries": "6.6.0",
+      "moment": "^2.29.1",
+      "nyc": "^15.1.0",
+      "patch-package": "^6.4.7",
+      "playwright": "^1.19.2",
+      "yarn": "^1.22.18"
+   },
+   "devDependencies": {
+      "@arkweid/lefthook": "^0.7.7",
+      "@betterer/cli": "^5.0.0-alpha.0",
+      "@betterer/regexp": "^5.0.0-alpha.0",
+      "@betterer/tsquery": "^5.0.0-alpha.0",
+      "@betterer/typescript": "^5.0.0-alpha.0",
+      "@faker-js/faker": "^6.3.1",
+      "@typescript-eslint/eslint-plugin": "^5.3.0",
+      "@typescript-eslint/parser": "^5.3.0",
+      "eslint": "^7.32.0",
+      "eslint-config-airbnb-base": "^14.2.1",
+      "eslint-plugin-import": "^2.25.2",
+      "eslint-plugin-playwright": "^0.6.0",
+      "prettier": "^2.4.1",
+      "typescript": "^4"
+   }
+}

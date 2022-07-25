@@ -1,0 +1,181 @@
+name: E2E Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      server:
+        description: "Server name"
+        default: "development"
+        required: true
+      concurrency:
+        description: "How many nodes should run the tests"
+        required: false
+        default: 15
+      frameworkBranch:
+        description: "e2e-framework branch that will be used as base for the images"
+        required: false
+        default: "main"
+  issue_comment:                                     
+     types: [created, edited, deleted]
+
+env:
+  HEROKU_APP_NAME: ${{ github.event.inputs.server }}
+  FRAMEWORK_BRANCH: ${{ github.event.inputs.frameworkBranch }}
+  E2E_CONCURRENCY: ${{ github.event.inputs.concurrency }}
+  E2E_TAGS: ${{ github.event.inputs.tags }}
+  IMAGE_NAME: "e2e-packhelp-pro"
+  GIT_SHA: ${{ github.sha }}
+  GIT_BRANCH: ${{ github.ref }}
+  PROJECT: e2e-template
+  LBOX_JOB_ID: ${{ github.event.inputs.lbox_job_id }}
+
+jobs:
+  build-e2e-image:
+    name: Build test framework image
+    runs-on: [ci-blue]
+    env:
+      GIT_SHA: ${{ github.sha }}
+      DOCKER_REGISTRY_ADDRESS: quay.io
+      PUBLIC_REGISTRY: harbor.packops.link/pp
+      DOCKER_REGISTRY_ORG: ${{ secrets.DOCKER_REGISTRY_ORG }}
+      DOCKER_REGISTRY_PASSWORD: ${{ secrets.DOCKER_REGISTRY_PASSWORD_QUAY }}
+      DOCKER_REGISTRY_USERNAME: ${{ secrets.DOCKER_REGISTRY_USERNAME_QUAY }}
+    steps:
+      - name: Set GitHub PR status check
+        uses: Sibz/github-status-action@v1
+        with:
+          authToken: ${{secrets.GITHUB_TOKEN}}
+          context: "qa/e2e-tests"
+          description: "QA E2E Tests"
+          state: "pending"
+          target_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Checkout GIT repo
+        uses: actions/checkout@v2
+        with:
+          clean: false
+      - name: Docker login
+        uses: docker/login-action@v1
+        with:
+          registry: quay.io
+          username: ${{ secrets.DOCKER_REGISTRY_USERNAME_QUAY }}
+          password: ${{ secrets.DOCKER_REGISTRY_PASSWORD_QUAY }}
+      - name: Build image
+        run: |
+          docker build \
+          --pull \
+          --build-arg NODE_ENV=production \
+          --build-arg FRAMEWORK_BRANCH=${FRAMEWORK_BRANCH} \
+          -t quay.io/packhelp/${IMAGE_NAME}:${GIT_SHA} \
+          --build-arg ${{ env.PUBLIC_REGISTRY }} \
+          -f ci/dockerfiles/Dockerfile.e2e.df .
+      - name: Push image
+        run: |
+          docker push quay.io/packhelp/${IMAGE_NAME}:${GIT_SHA}
+  warm-lambda:
+    name: Warm-up GCR endpoints
+    runs-on: [ci-blue]
+    env:
+      HEROKU_AUTH_TOKEN: ${{ secrets.HEROKU_AUTH_TOKEN }}
+      BASIC_AUTH_LOGIN: ${{ secrets.E2E_BASIC_AUTH_USERNAME }}
+      BASIC_AUTH_PASSWORD: ${{ secrets.E2E_BASIC_AUTH_PASSWORD }}
+    container:
+      image: quay.io/packhelp/toolbox
+      credentials:
+        username: ${{ secrets.DOCKER_REGISTRY_USERNAME_QUAY }}
+        password: ${{ secrets.DOCKER_REGISTRY_PASSWORD_QUAY }}
+    steps:
+      - name: Checkout GIT repo
+        uses: actions/checkout@v2
+        with:
+          clean: false
+      - name: Warming functions
+        run: |
+          count=$E2E_CONCURRENCY
+          for i in $(seq $count); do
+            curl https://development---packhelp-e2e-tests-jj7nzevsgq-ew.a.run.app/run-test > /dev/null
+          done
+  run-tests:
+    name: Run tests
+    needs: [build-e2e-image]
+    runs-on: [ci-blue]
+    timeout-minutes: 25
+    env:
+      E2E_S3_BUCKET_NAME: "ph-np-e2e-e2e-artifacts"
+      E2E_S3_BUCKET_ID: "AKIATHP46AXVPEYYV5QY"
+      E2E_S3_BUCKET_SECRET: ${{ secrets.E2E_S3_BUCKET_SECRET }}
+      SEGMENT_API_KEY: ${{ secrets.E2E_SEGMENT_API_KEY }}
+      BASIC_AUTH_LOGIN: ${{ secrets.E2E_BASIC_AUTH_USERNAME }}
+      BASIC_AUTH_PASSWORD: ${{ secrets.E2E_BASIC_AUTH_PASSWORD }}
+      LBOX_JOB_ID: ${{ github.event.inputs.lbox_job_id }}
+    container:
+      image: quay.io/packhelp/e2e-packhelp-pro:${{ github.sha }}
+      credentials:
+        username: ${{ secrets.DOCKER_REGISTRY_USERNAME_QUAY }}
+        password: ${{ secrets.DOCKER_REGISTRY_PASSWORD_QUAY }}
+    steps:
+      - name: Upload tests
+        run: |
+          cd /tests/
+          e2e upload-tests -p ${PROJECT} --sha ${GIT_SHA}
+      - name: Run tests
+        run: |
+          cd /tests/
+          e2e ci-run-tests --server ${HEROKU_APP_NAME} --sha ${GIT_SHA} --concurrency ${E2E_CONCURRENCY} --tags "${E2E_TAGS}"
+      - name: Set GitHub PR status check if success
+        uses: Sibz/github-status-action@v1
+        if: ${{ success() }}
+        with:
+          authToken: ${{secrets.GITHUB_TOKEN}}
+          context: "qa/e2e-tests"
+          description: "QA E2E Tests"
+          state: "success"
+          target_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Set GitHub PR status check if cancelled
+        uses: Sibz/github-status-action@v1
+        if: ${{ cancelled() }}
+        with:
+          authToken: ${{secrets.GITHUB_TOKEN}}
+          context: "qa/e2e-tests"
+          description: "QA E2E Tests"
+          state: "failure"
+          target_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - name: Set GitHub PR status check if failure
+        uses: Sibz/github-status-action@v1
+        if: ${{ failure() }}
+        with:
+          authToken: ${{secrets.GITHUB_TOKEN}}
+          context: "qa/e2e-tests"
+          description: "QA E2E Tests"
+          state: "failure"
+          target_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  # visual-regression:
+  #   name: Update Visual Regression
+  #   needs: [run-tests]
+  #   runs-on: [ci-blue]
+  #   container:
+  #     image: quay.io/packhelp/e2e-percy:main
+  #     credentials:
+  #       username: ${{ secrets.DOCKER_REGISTRY_USERNAME_QUAY }}
+  #       password: ${{ secrets.DOCKER_REGISTRY_PASSWORD_QUAY }}
+  #   env:
+  #     E2E_VISUAL_REGRESSION_ENABLED:  ${{ secrets.E2E_VISUAL_REGRESSION_ENABLED }}
+  #     E2E_S3_BUCKET_NAME: ${{ secrets.E2E_S3_BUCKET_NAME }}
+  #     E2E_S3_BUCKET_ID:  ${{ secrets.E2E_S3_BUCKET_ID }}
+  #     E2E_S3_BUCKET_SECRET: ${{ secrets.E2E_S3_BUCKET_SECRET }}
+  #     K8S_SECRET_PERCY_TOKEN: ${{ secrets.K8S_SECRET_PERCY_TOKEN }}
+  #     CI_COMMIT_REF_NAME: ${{ github.head_ref }}
+  #     CI_PROJECT_DIR: ${{ github.workspace }}
+  #     GIT_SHA: ${{ github.sha }}
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #       with:
+  #         clean: false
+  #     - name: Collect visual regression screenshots
+  #       run: |
+  #         cd /app/
+  #         ./prepare-visual-regression-v2.sh
+  #     - name: Run Percy build
+  #       run: |
+  #         cd /app/
+  #         echo "Building baseline for branch: $CI_COMMIT_REF_NAME"
+  #         ./run-visual-regression-v3.sh

@@ -1,0 +1,15 @@
+ARG FRAMEWORK_BRANCH=main
+FROM quay.io/packhelp/e2e-framework-v2:$FRAMEWORK_BRANCH
+
+
+ARG NODE_ENV
+ENV NODE_ENV=${NODE_ENV}
+
+WORKDIR /tests
+
+COPY package.json yarn.lock ./
+
+RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 yarn install --frozen-lockfile \
+  && yarn cache clean
+
+COPY . .
